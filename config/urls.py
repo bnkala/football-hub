@@ -20,6 +20,9 @@ from rest_framework.routers import DefaultRouter
 
 from clubs.views import ClubViewSet
 from leagues.views import LeagueViewSet
+from players.views import PlayerViewSet
+from managers.views import ManagerViewSet
+from stadiums.views import StadiumViewSet
 
 router = DefaultRouter()
 
@@ -33,6 +36,24 @@ router.register(
     "clubs",
     ClubViewSet,
     basename="club",
+)
+
+router.register(
+    "players",
+    PlayerViewSet,
+    basename="player",
+)
+
+router.register(
+    "managers",
+    ManagerViewSet,
+    basename="manager",
+)
+
+router.register(
+    "stadiums",
+    StadiumViewSet,
+    basename="stadium",
 )
 
 
