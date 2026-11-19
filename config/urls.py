@@ -23,6 +23,7 @@ from leagues.views import LeagueViewSet
 from players.views import PlayerViewSet
 from managers.views import ManagerViewSet
 from stadiums.views import StadiumViewSet
+from fixtures.views import MatchViewSet
 
 router = DefaultRouter()
 
@@ -56,6 +57,11 @@ router.register(
     basename="stadium",
 )
 
+router.register(
+    "fixtures",
+    MatchViewSet,
+    basename="fixture",
+)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
