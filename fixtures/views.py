@@ -15,6 +15,8 @@ class MatchViewSet(viewsets.ModelViewSet):
         club = self.request.query_params.get("club")
         status = self.request.query_params.get("status")
         matchweek = self.request.query_params.get("matchweek")
+        season = self.request.query_params.get("season")
+        competition = self.request.query_params.get("competition")
 
         if league:
             queryset = queryset.filter(league_id=league)
@@ -28,5 +30,11 @@ class MatchViewSet(viewsets.ModelViewSet):
 
         if matchweek:
             queryset = queryset.filter(matchweek=matchweek)
+
+        if season:
+            queryset = queryset.filter(season_id=season)
+
+        if competition:
+            queryset = queryset.filter(season__compeition_id=competition)
 
         return queryset

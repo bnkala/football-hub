@@ -42,5 +42,27 @@ class Match(models.Model):
 
     matchweek = models.PositiveIntegerField(null=True, blank=True)
 
+    season = models.ForeignKey(
+        "competitions.Season",
+        on_delete=models.PROTECT,
+        related_name="matches",
+        null=True,
+        blank=True,
+    )
+
+    knockout_tie = models.ForeignKey(
+        "competitions.KnockoutTie",
+        on_delete=models.SET_NULL,
+        related_name="matches",
+        null=True,
+        blank=True,
+    )
+
+    leg = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        choices=[(1, "First Leg"), (2, "Second Leg")],
+    )
+
     def __str__(self):
         return f"{self.home_club} vs {self.away_club}"
