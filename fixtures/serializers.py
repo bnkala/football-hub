@@ -1,6 +1,7 @@
 
 from rest_framework import serializers
 from .models import Match
+from leagues.models import League
 from competitions.models import CompetitionEntry
 
 
@@ -8,6 +9,12 @@ class MatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Match
         fields = "__all__"
+
+    league = serializers.PrimaryKeyRelatedField(
+        queryset=League.objects.all(),
+        required=False,
+        allow_null=True,
+    )
 
     def validate(self, attrs):
         instance = self.instance

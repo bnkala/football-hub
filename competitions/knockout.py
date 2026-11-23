@@ -1,4 +1,5 @@
 from fixtures.models import Match
+from django.db import transaction
 
 def calculate_aggregate(knockout_tie):
     matches = Match.objects.filter(
@@ -32,6 +33,7 @@ def calculate_aggregate(knockout_tie):
     }
 
 
+
 def determine_winner(knockout_tie):
     result = calculate_aggregate(knockout_tie)
 
@@ -44,8 +46,28 @@ def determine_winner(knockout_tie):
     else:
         raise ValueError("Unsupported knockout tie format.")
 
-    if result["matches_played"] != expected_legs:
+    matches = list(
+        Match.objects.filter(
+            knockout_tie=knockout_tie
+        ).order_by("leg", "id")
+    )
+
+    # Only determine a winner when the expected
+    # number of fixtures has been completed.
+    if len(matches) != expected_legs:
         return None
+
+    if any(
+        match.status != "FINISHED"
+        or match.home_score is None
+        or match.away_score is None
+        for match in matches
+    ):
+        return None
+
+    if expected_legs == 2:
+        if {match.leg for match in matches} != {1, 2}:
+            return None
 
     if result["home_aggregate"] > result["away_aggregate"]:
         return knockout_tie.home_club
@@ -53,6 +75,50 @@ def determine_winner(knockout_tie):
     if result["away_aggregate"] > result["home_aggregate"]:
         return knockout_tie.away_club
 
-    # Equal scores require extra time, penalties,
-    # or another competition-specific tie-breaker.
-    return None
+    # Aggregate scores are equal.
+    # Check penalties in the deciding fixture.
+    deciding_match = matches[-1]
+
+    home_penalties = deciding_match.home_penalties
+    away_penalties = deciding_match.away_penalties
+
+    if home_penalties is None or away_penalties is None:
+        return None
+
+    if home_penalties == away_penalties:
+        return None
+
+    if home_penalties > away_penalties:
+        return deciding_match.home_club
+
+    return deciding_match.away_club
+
+@transaction.atomic
+def complete_knockout_tie(knockout_tie):
+    """
+    Complete a knockout tie once a winner can be determined.
+    Save the winner and completion status.
+    """
+
+    tie = type(knockout_tie).objects.select_for_update().get(
+        pk=knockout_tie.pk
+    )
+
+    winner = determine_winner(tie)
+
+    if winner is None:
+        return None
+
+    if tie.is_completed:
+        if tie.winner_id != winner.id:
+            raise ValueError(
+                "Completed tie has a different recorded winner."
+            )
+        return winner
+
+    tie.winner = winner
+    tie.is_completed = True
+
+    tie.save(update_fields=["winner", "is_completed"])
+
+    return winner

@@ -12,8 +12,10 @@ class Match(models.Model):
 
     league = models.ForeignKey(
         "leagues.League",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="matches",
+        null=True,
+        blank=True,
     )
 
     home_club = models.ForeignKey(
@@ -26,6 +28,16 @@ class Match(models.Model):
         "clubs.Club",
         on_delete=models.CASCADE,
         related_name="away_matches",
+    )
+
+    home_penalties = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    away_penalties = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
     )
 
     kickoff = models.DateTimeField()
