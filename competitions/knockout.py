@@ -1,5 +1,7 @@
 from fixtures.models import Match
 from django.db import transaction
+from competitions.models import KnockoutRound, KnockoutTie
+from competitions.fixture_generation import generate_knockout_fixtures
 
 def calculate_aggregate(knockout_tie):
     matches = Match.objects.filter(
@@ -122,3 +124,114 @@ def complete_knockout_tie(knockout_tie):
     tie.save(update_fields=["winner", "is_completed"])
 
     return winner
+
+
+@transaction.atomic
+def progress_knockout_round(knockout_round, first_kickoff=None, days_between_legs=7):
+    """
+    Advance winners from a completed knockout round
+    into the next round of the same season.
+
+    Clubs are paired in the order of their existing ties.
+
+    If first_kickoff is supplied, automatically generate
+    fixtures for each newly created knockout tie.
+
+    Round progression and fixture generation are performed
+    within the same database transaction.
+    """
+
+    current_round = KnockoutRound.objects.select_for_update().get(
+        pk=knockout_round.pk
+    )
+
+    ties = list(
+        KnockoutTie.objects.filter(
+            knockout_round=current_round
+        )
+        .select_related("winner", "home_club", "away_club")
+        .order_by("id")
+    )
+
+    if not ties:
+        raise ValueError(
+            "Cannot progress a round without knockout ties."
+        )
+
+    for tie in ties:
+        if not tie.is_completed or tie.winner_id is None:
+            raise ValueError(
+                "All knockout ties must be completed before progression."
+            )
+
+        if tie.winner_id not in (
+            tie.home_club_id,
+            tie.away_club_id,
+        ):
+            raise ValueError(
+                "A knockout tie has an invalid winner."
+            )
+
+    winners = [tie.winner for tie in ties]
+
+    if len({club.id for club in winners}) != len(winners):
+        raise ValueError(
+            "A club cannot qualify more than once from the same round."
+        )
+
+    if len(winners) % 2 != 0:
+        raise ValueError(
+            "An even number of winners is required."
+        )
+
+    next_round = (
+        KnockoutRound.objects.filter(
+            season=current_round.season,
+            order__gt=current_round.order,
+        )
+        .order_by("order")
+        .first()
+    )
+
+    if next_round is None:
+        raise ValueError(
+            "No next knockout round exists for this season."
+        )
+
+    existing_ties = KnockoutTie.objects.filter(
+        knockout_round=next_round
+    )
+
+    if existing_ties.exists():
+        raise ValueError(
+            "The next round already contains knockout ties."
+        )
+
+    new_ties = []
+
+    for index in range(0, len(winners), 2):
+        new_ties.append(
+            KnockoutTie(
+                knockout_round=next_round,
+                home_club=winners[index],
+                away_club=winners[index + 1],
+            )
+        )
+
+    KnockoutTie.objects.bulk_create(new_ties)
+
+    created_ties = list(
+        KnockoutTie.objects.filter(
+            knockout_round=next_round
+        ).order_by("id")
+    )
+
+    if first_kickoff is not None:
+        for tie in created_ties:
+            generate_knockout_fixtures(
+                tie=tie,
+                first_kickoff=first_kickoff,
+                days_between_legs=days_between_legs,
+            )
+
+    return created_ties

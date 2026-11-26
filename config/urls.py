@@ -24,7 +24,7 @@ from players.views import PlayerViewSet
 from managers.views import ManagerViewSet
 from stadiums.views import StadiumViewSet
 from fixtures.views import MatchViewSet
-from competitions.views import CompetitionViewSet, SeasonViewSet, CompetitionEntryViewSet
+from competitions.views import CompetitionViewSet, SeasonViewSet, CompetitionEntryViewSet, KnockoutRoundViewSet
 
 router = DefaultRouter()
 
@@ -80,6 +80,12 @@ router.register(
     "competition-entries",
     CompetitionEntryViewSet,
     basename="competition-entry"
+)
+
+router.register(
+    "knockout-rounds",
+    KnockoutRoundViewSet,
+    basename="knockout-round",
 )
 
 urlpatterns = [

@@ -1,10 +1,14 @@
 from django.shortcuts import render
 from rest_framework import viewsets
 from .models import Competition, Season, CompetitionEntry
-from .serializers import CompetitionSerializer, SeasonSerializer, CompetitionEntrySerializer
+from .serializers import CompetitionSerializer, SeasonSerializer, CompetitionEntrySerializer, KnockoutProgressionSerializer
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .standings import calculate_standings
+from rest_framework.permissions import IsAdminUser
+from rest_framework import status
+from competitions.models import KnockoutRound
+from competitions.knockout import progress_knockout_round
 # Create your views here.
 
 class CompetitionViewSet(viewsets.ModelViewSet):
@@ -86,3 +90,64 @@ class CompetitionEntryViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+
+class KnockoutRoundViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = KnockoutRound.objects.all()
+    permission_classes = [IsAdminUser]
+
+    def get_serializer_class(self):
+        from rest_framework import serializers
+
+        class KnockoutRoundSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = KnockoutRound
+                fields = "__all__"
+
+        return KnockoutRoundSerializer
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="progress",
+    )
+    def progress(self, request, pk=None):
+        knockout_round = self.get_object()
+
+        serializer = KnockoutProgressionSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            new_ties = progress_knockout_round(
+                knockout_round,
+                first_kickoff=serializer.validated_data.get(
+                    "first_kickoff"
+                ),
+                days_between_legs=serializer.validated_data.get(
+                    "days_between_legs", 7
+                ),
+            )
+
+        except ValueError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "message": "Knockout round progressed successfully.",
+                "created_ties": [
+                    {
+                        "id": tie.id,
+                        "home_club": tie.home_club_id,
+                        "away_club": tie.away_club_id,
+                        "is_completed": tie.is_completed,
+                    }
+                    for tie in new_ties
+                ],
+            },
+            status=status.HTTP_201_CREATED,
+        )

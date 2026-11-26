@@ -2,8 +2,9 @@ from django.shortcuts import render
 from rest_framework import viewsets
 from .models import Match
 from .serializers import MatchSerializer
-from django.db import transaction
-from rest_framework.exceptions import ValidationError
+from django.db import transaction, IntegrityError
+from competitions.models import KnockoutTie
+from rest_framework.exceptions import ValidationError, NotFound
 from competitions.knockout import complete_knockout_tie
 # Create your views here.
 
@@ -43,45 +44,142 @@ class MatchViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-    def perform_create(self, serializer):
-        with transaction.atomic():
-            match = serializer.save()
+    def _lock_knockout_tie(self, tie_id):
+        if not tie_id:
+            return None
 
-            if match.knockout_tie_id:
-                complete_knockout_tie(match.knockout_tie)
+        tie = KnockoutTie.objects.select_for_update().get(
+            pk=tie_id
+        )
 
-    def perform_update(self, serializer):
-        with transaction.atomic():
-            match = serializer.instance
-
-            if (
-                match.knockout_tie_id
-                and match.knockout_tie.is_completed
-            ):
-                raise ValidationError({
-                    "knockout_tie": (
-                        "This knockout tie is already completed. "
-                        "Its fixtures cannot be modified."
-                    )
-                })
-
-            updated_match = serializer.save()
-
-            if updated_match.knockout_tie_id:
-                complete_knockout_tie(
-                    updated_match.knockout_tie
-                )
-
-    def perform_destroy(self, instance):
-        if (
-            instance.knockout_tie_id
-            and instance.knockout_tie.is_completed
-        ):
+        if tie.is_completed:
             raise ValidationError({
                 "knockout_tie": (
-                    "Cannot delete a fixture belonging "
-                    "to a completed knockout tie."
+                    "This knockout tie is already completed. "
+                    "Its fixtures cannot be created, "
+                    "modified or deleted."
                 )
             })
 
-        instance.delete()
+        return tie
+
+
+    def _lock_fixture(self, fixture_id):
+        try:
+            return Match.objects.select_for_update().get(pk=fixture_id)
+
+        except Match.DoesNotExist as exc:
+            raise NotFound("This fixture no longer exists") from exc
+
+    def perform_create(self, serializer):
+        try:
+            with transaction.atomic():
+                tie = serializer.validated_data.get(
+                    "knockout_tie"
+                )
+
+                locked_tie = self._lock_knockout_tie(
+                    tie.pk if tie else None
+                )
+
+                if locked_tie:
+                    match = serializer.save(
+                        knockout_tie=locked_tie
+                    )
+
+                    complete_knockout_tie(locked_tie)
+                else:
+                    serializer.save()
+
+        except IntegrityError as exc:
+            self._handle_integrity_error(exc)
+
+    def perform_update(self, serializer):
+        try:
+            with transaction.atomic():
+                original = serializer.instance
+
+                requested_tie = serializer.validated_data.get(
+                    "knockout_tie",
+                    original.knockout_tie,
+                )
+
+                tie_id = (
+                    original.knockout_tie_id
+                    or (
+                        requested_tie.pk
+                        if requested_tie else None
+                    )
+                )
+
+                locked_tie = self._lock_knockout_tie(tie_id)
+
+                match = self._lock_fixture(original.pk)
+                if match.knockout_tie_id != original.knockout_tie_id:
+                    raise ValidationError({
+                        "knockout_tie": (
+                            "The fixture has changed. "
+                            "Please retry your request."
+                        )
+                    })
+
+                serializer.instance = match
+
+                # Revalidate against the locked, current fixture.
+                serializer.validate(
+                    serializer.validated_data
+                )
+
+                if locked_tie:
+                    serializer.save(
+                        knockout_tie=locked_tie
+                    )
+
+                    complete_knockout_tie(locked_tie)
+                else:
+                    serializer.save()
+
+        except IntegrityError as exc:
+            self._handle_integrity_error(exc)
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            self._lock_knockout_tie(
+                instance.knockout_tie_id
+            )
+
+            match = self._lock_fixture(instance.pk)
+
+            if match.knockout_tie_id != instance.knockout_tie_id:
+                raise ValidationError({
+                    "knockout_tie": (
+                        "The fixture has changed. "
+                        "Please retry your request."
+                    )
+                })
+
+            match.delete()
+
+    def _handle_integrity_error(self, exc):
+        cause = exc.__cause__
+        diagnostic = getattr(cause, "diag", None)
+        constraint = getattr(
+            diagnostic,
+            "constraint_name",
+            None,
+        )
+
+        if constraint == "unique_knockout_tie_leg":
+            raise ValidationError({
+                "leg": (
+                    "A fixture already exists for "
+                    "this knockout tie and leg."
+                )
+            }) from exc
+
+        if constraint == "valid_knockout_fixture_leg":
+            raise ValidationError({
+                "leg": "Invalid knockout fixture leg."
+            }) from exc
+
+        raise exc

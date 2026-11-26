@@ -76,5 +76,26 @@ class Match(models.Model):
         choices=[(1, "First Leg"), (2, "Second Leg")],
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["knockout_tie", "leg"],
+                condition=models.Q(
+                    knockout_tie__isnull=False
+                ),
+                name="unique_knockout_tie_leg",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(knockout_tie__isnull=True)
+                    | (
+                        models.Q(leg__isnull=False)
+                        & models.Q(leg__in=[1, 2])
+                    )
+                ),
+                name="valid_knockout_fixture_leg",
+            ),
+        ]
+
     def __str__(self):
         return f"{self.home_club} vs {self.away_club}"
